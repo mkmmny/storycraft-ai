@@ -20,11 +20,16 @@ MAX_GENERATION_RETRIES = 5
 
 def _get_client() -> OpenAI:
     """获取硅基流动客户端（OpenAI 兼容接口）"""
-    load_dotenv()
+    # 显式加载项目根目录 .env，避免从其他工作目录启动时读不到
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    load_dotenv(dotenv_path=env_path, override=False)
+
     api_key = os.environ.get("SILICONFLOW_API_KEY") or os.environ.get("OPENAI_API_KEY")
     api_key = (api_key or "").strip().strip('"').strip("'")
     if not api_key:
-        raise ValueError("未检测到 API Key，请在 .env 中设置 SILICONFLOW_API_KEY。")
+        raise ValueError(
+            "未检测到 API Key。请在项目根目录 .env 中设置 SILICONFLOW_API_KEY=你的密钥，然后重启应用。"
+        )
     return OpenAI(
         api_key=api_key,
         base_url=SILICONFLOW_BASE_URL,
@@ -485,7 +490,16 @@ def generate_chapter(
             return True
         return _content_passes_safety(raw)
 
-    client = _get_client()
+    try:
+        client = _get_client()
+    except Exception as e:
+        return {
+            "content": f"生成失败：{e}",
+            "illustration": "",
+            "choices": [],
+            "error": True,
+        }
+
     system_prompt = _build_system_prompt(theme, protagonist, style, age_range, values)
 
     last_error = ""
