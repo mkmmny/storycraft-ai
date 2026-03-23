@@ -711,18 +711,32 @@ def main_new_story():
                 last_ts["v"] = now
                 stream_box.markdown(preview_text)
 
-            result = generate_chapter(
-                theme=config["theme"],
-                protagonist=config["protagonist"],
-                style=config["style"],
-                age_range=config["age_range"],
-                values=config["values"],
-                chapter_num=current_num,
-                previous_chapters=chapters,
-                chosen_branch=selected_branch if current_num > 1 else None,
-                strict_generation=strict_gen,
-                stream_callback=_on_stream_preview,
-            )
+            try:
+                result = generate_chapter(
+                    theme=config["theme"],
+                    protagonist=config["protagonist"],
+                    style=config["style"],
+                    age_range=config["age_range"],
+                    values=config["values"],
+                    chapter_num=current_num,
+                    previous_chapters=chapters,
+                    chosen_branch=selected_branch if current_num > 1 else None,
+                    strict_generation=strict_gen,
+                    stream_callback=_on_stream_preview,
+                )
+            except TypeError:
+                # 兼容旧版本 ai_story.generate_chapter（无 stream_callback 参数）
+                result = generate_chapter(
+                    theme=config["theme"],
+                    protagonist=config["protagonist"],
+                    style=config["style"],
+                    age_range=config["age_range"],
+                    values=config["values"],
+                    chapter_num=current_num,
+                    previous_chapters=chapters,
+                    chosen_branch=selected_branch if current_num > 1 else None,
+                    strict_generation=strict_gen,
+                )
 
             if result.get("error"):
                 st.error(result["content"])
@@ -932,7 +946,7 @@ def main():
     st.sidebar.markdown('<div class="nav-section-title">选择功能</div>', unsafe_allow_html=True)
     st.sidebar.markdown('<div style="height: 6px;"></div>', unsafe_allow_html=True)
     page = st.sidebar.radio(
-        "",
+        "导航功能",
         ["✨ 创作新故事", "📚 我的故事"],
         key="nav_radio",
         label_visibility="collapsed",
