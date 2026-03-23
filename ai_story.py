@@ -61,7 +61,7 @@ def _build_system_prompt(theme: str, protagonist: str, style: str, age_range: st
    【分支B】xxx
    【分支C】xxx（可选）
 6. 每个【分支X】后面只写该选项的一句简短剧情描述（20-60字），同一行内写完；禁止在分支后写「以下是第X章」「第X章内容」等任何元说明或预告。
-7. **禁止**在正文最开头写「好的」「这是为」「根据」「为您创作」「下面是为X岁小朋友」等寒暄或元说明；正文必须**直接**以「第X章：」标题或故事正文第一句开始。
+7. **禁止**在正文最开头写「好的」「这是为」「根据」「为您创作」「下面是为X岁小朋友」等寒暄或元说明；正文必须直接以「第X章：」标题或故事正文第一句开始。
 """
 
 
@@ -154,7 +154,7 @@ def _strip_prompt_leak_lines(text: str) -> str:
             if re.match(r"^[•·\-*]\s+", line) or re.match(r"^\d+[\.|、]\s*", line):
                 continue
             # 遇到正文标题/正文第一句时退出提纲模式
-            if re.match(r"^(?:第\s*[一二三四五六七八九十0-9]+\s*章|小双是|从前|一天|阳光)", line):
+            if re.match(rf"^(?:第\s*f=[一二三四五六七八九十0-9]+\s*章|{protagonist}|从前|一天|阳光|月光|\"|“)", line):
                 in_outline = False
             else:
                 continue

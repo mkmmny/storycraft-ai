@@ -46,7 +46,101 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    .main-header { font-size: 2rem; color: #2c3e50; margin-bottom: 1rem; }
+    .main-header {
+        width: 100%;
+        display: block;
+        text-align: center;
+        font-size: clamp(2.4rem, 4.2vw, 3.3rem) !important;
+        font-weight: 800 !important;
+        line-height: 1.15 !important;
+        letter-spacing: 0.01em;
+        color: #2c3e50 !important;
+        margin: 0.35rem 0 1.2rem 0 !important;
+    }
+
+    /* 全局字体（不覆盖 main-header） */
+    html, body, [class*="css"], .stApp {
+        font-size: 19px !important;
+        line-height: 1.66 !important;
+    }
+
+    /* 正文字号 */
+    .stMarkdown, .stText, p, li, label, .stCaption {
+        font-size: 1.12rem !important;
+    }
+
+    /* 表单与按钮 */
+    .stTextInput label, .stSelectbox label, .stTextArea label, .stRadio label, .stCheckbox label {
+        font-size: 1.1rem !important;
+        font-weight: 600 !important;
+    }
+    .stButton button {
+        font-size: 1.1rem !important;
+    }
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div {
+        font-size: 1.1rem !important;
+        min-height: 2.85rem !important;
+    }
+
+    /* 图片中的文本框适当放大 */
+    .stTextInput input {
+        padding-top: 0.55rem !important;
+        padding-bottom: 0.55rem !important;
+    }
+    .stSelectbox div[data-baseweb="select"] > div {
+        min-height: 2.9rem !important;
+    }
+
+    /* 侧边栏字体 */
+    section[data-testid="stSidebar"] * {
+        font-size: 1.1rem !important;
+        line-height: 1.6 !important;
+    }
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3,
+    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p strong {
+        font-size: 1.2rem !important;
+        font-weight: 700 !important;
+    }
+
+    /* 故事工坊标题更大（仅侧边栏） */
+    section[data-testid="stSidebar"] [data-testid="stSidebarContent"] h1 {
+        font-size: 1.65rem !important;
+        font-weight: 800 !important;
+        line-height: 1.25 !important;
+        letter-spacing: 0.01em;
+        margin-bottom: 0.6rem !important;
+    }
+
+    /* 导航小标题（选择功能） */
+    section[data-testid="stSidebar"] .nav-section-title {
+        display: block !important;
+        margin: 0.32rem 0 0.65rem 0 !important;
+        padding: 0 !important;
+        color: #2c3e50 !important;
+        font-size: 1.50rem !important;
+        font-weight: 800 !important;
+        line-height: 1.25 !important;
+        letter-spacing: 0.01em !important;
+    }
+
+    /* checkbox 间距保持原有舒适度 */
+    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label {
+        margin-bottom: 0.38rem !important;
+    }
+
+    /* 将「创作新故事 / 我的故事」两行间距调大 */
+    section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+        margin-bottom: 0.72rem !important;
+    }
+
+    /* 选择功能选项字号（低于小标题） */
+    section[data-testid="stSidebar"] div[data-testid="stRadio"] label p {
+        font-size: 1.18rem !important;
+        line-height: 1.5 !important;
+    }
+
     .chapter-box {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -54,6 +148,9 @@ st.markdown(
         border-radius: 10px;
         margin: 1rem 0;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        font-size: 1.18rem !important;
+        font-weight: 700;
+        line-height: 1.48;
     }
     .illustration-box {
         background: #f8f9fa;
@@ -61,8 +158,17 @@ st.markdown(
         padding: 1rem;
         margin: 0.5rem 0;
         font-style: italic;
+        font-size: 1.06rem !important;
+        line-height: 1.62;
     }
-    .parent-panel { background: #fff8e6; padding: 0.75rem; border-radius: 8px; border: 1px solid #f0d78c; }
+    .parent-panel {
+        background: #fff8e6;
+        padding: 0.75rem;
+        border-radius: 8px;
+        border: 1px solid #f0d78c;
+        font-size: 1rem !important;
+        margin-bottom: 0.6rem;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -90,10 +196,12 @@ def init_session_state():
         st.session_state.cancel_notice = ""
     if "cancel_session_confirming" not in st.session_state:
         st.session_state.cancel_session_confirming = False
+    if "pending_delete_story_id" not in st.session_state:
+        st.session_state.pending_delete_story_id = None
 
 
 def render_story_form():
-    st.markdown('<p class="main-header">📖 AI 互动故事生成器</p>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📖 AI 互动故事生成器</h1>', unsafe_allow_html=True)
     st.markdown("---")
 
     col1, col2 = st.columns(2)
@@ -174,25 +282,14 @@ def _extract_title_and_clean_body(body: str, chapter_num: int) -> tuple[str, str
         tail_raw = (m.group(2) or "").strip()
         title = f"第{chapter_num}章"
 
-        # 仅当首行尾部明显是“短标题”时才提取；否则视为正文，避免正文误进标题框
+        # 标题判断规则：短长度（<=10字）+ 无句号（。或.）
         remainder_from_first = ""
         if tail_raw:
             maybe_title = tail_raw.strip(" ：:，,；;。!！?？\"'“”‘’")
-            # 命中这些情况时，说明更像正文而非标题
-            looks_like_body = (
-                len(maybe_title) > 24
-                or "，" in maybe_title
-                or "," in maybe_title
-                or "“" in maybe_title
-                or "”" in maybe_title
-                or "！" in maybe_title
-                or "？" in maybe_title
-                or "。" in maybe_title
-                or "：" in maybe_title
-                or ":" in maybe_title
-            )
+            is_short_title = len(maybe_title) <= 10
+            no_period = ("。" not in maybe_title) and ("." not in maybe_title)
 
-            if not looks_like_body and maybe_title:
+            if maybe_title and is_short_title and no_period:
                 title = maybe_title
             else:
                 remainder_from_first = tail_raw
@@ -212,6 +309,14 @@ def _extract_title_and_clean_body(body: str, chapter_num: int) -> tuple[str, str
     while cleaned_split and heading_line.match(cleaned_split[0].strip()):
         cleaned_split.pop(0)
     cleaned = "\n".join(cleaned_split).strip()
+
+    # 若已识别出自定义短标题，则移除正文开头重复的同名标题行（标题只在紫色框显示）
+    if title and title != f"第{chapter_num}章" and cleaned:
+        title_line = re.compile(rf"^(?:#{1,6}\s*)?{re.escape(title)}\s*$")
+        split2 = cleaned.split("\n")
+        while split2 and title_line.match(split2[0].strip()):
+            split2.pop(0)
+        cleaned = "\n".join(split2).strip()
 
     # 二次过滤仅移除“明确模板行”
     cleaned_lines = []
@@ -426,6 +531,7 @@ def main_new_story():
     if not st.session_state.story_config:
         config = render_story_form()
 
+        st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
         if st.button("开始创作第一章", type="primary", use_container_width=True):
             with st.spinner("正在对故事设定进行安全审核…"):
                 valid, err_msg = validate_config(config)
@@ -644,7 +750,7 @@ def main_my_stories():
     init_session_state()
     filter_display = st.session_state.get("filter_display", True)
 
-    st.markdown('<p class="main-header">📚 我的故事</p>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📚 我的故事</h1>', unsafe_allow_html=True)
     st.markdown("---")
 
     # 重新选分支：先让用户选择「保留第一章」或「重新生成第一章」
@@ -685,11 +791,25 @@ def main_my_stories():
                     st.session_state.replay_pick_story_id = story_id
                     st.rerun()
             with b3:
-                if st.button("🗑️ 删除此故事", key="del_this"):
-                    if delete_story(story_id):
-                        del st.session_state.viewing_story_id
-                        st.success("已删除")
+                is_pending = st.session_state.get("pending_delete_story_id") == story_id
+                if not is_pending:
+                    if st.button("🗑️ 删除此故事", key="del_this"):
+                        st.session_state.pending_delete_story_id = story_id
                         st.rerun()
+                else:
+                    st.warning("确认删除后将无法恢复。")
+                    c_del1, c_del2 = st.columns(2)
+                    with c_del1:
+                        if st.button("✅ 确认删除", key=f"confirm_del_{story_id}"):
+                            if delete_story(story_id):
+                                st.session_state.pending_delete_story_id = None
+                                del st.session_state.viewing_story_id
+                                st.success("已删除")
+                                st.rerun()
+                    with c_del2:
+                        if st.button("取消", key=f"cancel_del_{story_id}"):
+                            st.session_state.pending_delete_story_id = None
+                            st.rerun()
         return
 
     stories = get_all_stories()
@@ -712,10 +832,25 @@ def main_my_stories():
                     st.session_state.replay_pick_story_id = s["id"]
                     st.rerun()
             with b3:
-                if st.button("删除", key=f"del_{s['id']}"):
-                    if delete_story(s["id"]):
-                        st.success("已删除")
+                sid = s["id"]
+                is_pending = st.session_state.get("pending_delete_story_id") == sid
+                if not is_pending:
+                    if st.button("删除", key=f"del_{sid}"):
+                        st.session_state.pending_delete_story_id = sid
                         st.rerun()
+                else:
+                    st.warning("确认删除后将无法恢复。")
+                    c_del1, c_del2 = st.columns(2)
+                    with c_del1:
+                        if st.button("✅ 确认删除", key=f"confirm_del_{sid}"):
+                            if delete_story(sid):
+                                st.session_state.pending_delete_story_id = None
+                                st.success("已删除")
+                                st.rerun()
+                    with c_del2:
+                        if st.button("取消", key=f"cancel_del_{sid}"):
+                            st.session_state.pending_delete_story_id = None
+                            st.rerun()
             with b4:
                 pass
 
@@ -730,23 +865,24 @@ def main():
         '<div class="parent-panel"><b>👪 家长模式</b></div>',
         unsafe_allow_html=True,
     )
+    st.sidebar.markdown('<div style="height: 6px;"></div>', unsafe_allow_html=True)
     st.session_state.parent_mode = st.sidebar.checkbox(
         "开启家长模式",
         value=st.session_state.get("parent_mode", True),
         help="关闭后部分保护选项将放开，请确保有家长监护。",
     )
     pm = st.session_state.parent_mode
-    st.session_state.filter_display = st.sidebar.checkbox(
-        "展示时过滤敏感词（掩码显示）",
-        value=st.session_state.get("filter_display", True),
-        disabled=not pm,
-        help="开启时用 *** 替换敏感词；关闭则显示原文（含未掩码，请谨慎）。",
-    )
     st.session_state.strict_generation = st.sidebar.checkbox(
-        "生成时严格审核（违规则自动重新生成）",
+        "生成时严格审核",
         value=st.session_state.get("strict_generation", True),
         disabled=not pm,
         help="关闭后不再因本地敏感词拦截而重试生成（不推荐儿童单独使用）。",
+    )
+    st.session_state.filter_display = st.sidebar.checkbox(
+        "展示时过滤敏感词",
+        value=st.session_state.get("filter_display", True),
+        disabled=not pm,
+        help="开启时用 *** 替换敏感词；关闭则显示原文（含未掩码，请谨慎）。",
     )
     if not pm:
         st.sidebar.warning("家长模式已关闭，请自行承担内容风险。")
@@ -768,10 +904,13 @@ def main():
                 st.rerun()
 
     st.sidebar.markdown("---")
+    st.sidebar.markdown('<div class="nav-section-title">选择功能</div>', unsafe_allow_html=True)
+    st.sidebar.markdown('<div style="height: 6px;"></div>', unsafe_allow_html=True)
     page = st.sidebar.radio(
-        "选择功能",
+        "",
         ["✨ 创作新故事", "📚 我的故事"],
         key="nav_radio",
+        label_visibility="collapsed",
     )
 
     if page == "✨ 创作新故事":
