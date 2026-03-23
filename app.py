@@ -146,7 +146,7 @@ def _chapter_display_body(ch: dict, filter_on: bool) -> str:
 
 
 def _extract_title_and_clean_body(body: str, chapter_num: int) -> tuple[str, str]:
-    """从正文中提取章节标题，并移除正文里的“第X章”前缀及模板提示词。"""
+    """从正文中提取章节标题，并移除正文里的“第X章/标题”重复信息。"""
     text = (body or "").strip()
     if not text:
         return f"第{chapter_num}章", ""
@@ -166,17 +166,52 @@ def _extract_title_and_clean_body(body: str, chapter_num: int) -> tuple[str, str
 
     first = lines[0].strip() if lines else ""
 
-    m = re.match(r"^(?:#{1,6}\s*)?第\s*([一二三四五六七八九十0-9]+)\s*章\s*[：:]?\s*(.*)$", first)
+    m = re.match(
+        r"^(?:#{1,6}\s*)?第\s*([一二三四五六七八九十0-9]+)\s*章\s*[：:]?\s*(.*)$",
+        first,
+    )
     if m:
-        tail = (m.group(2) or "").strip()
-        title = tail if tail else f"第{chapter_num}章"
-        cleaned = "\n".join(lines[1:]).strip()
-        # 兜底：如果去掉标题后正文为空，则保留原标题行后面的原文（避免“正文消失”）
-        if not cleaned:
-            cleaned = "\n".join(original_lines[1:]).strip()
+        tail_raw = (m.group(2) or "").strip()
+        title = f"第{chapter_num}章"
+
+        # 仅当首行尾部明显是“短标题”时才提取；否则视为正文，避免正文误进标题框
+        remainder_from_first = ""
+        if tail_raw:
+            maybe_title = tail_raw.strip(" ：:，,；;。!！?？\"'“”‘’")
+            # 命中这些情况时，说明更像正文而非标题
+            looks_like_body = (
+                len(maybe_title) > 24
+                or "，" in maybe_title
+                or "," in maybe_title
+                or "“" in maybe_title
+                or "”" in maybe_title
+                or "！" in maybe_title
+                or "？" in maybe_title
+                or "。" in maybe_title
+                or "：" in maybe_title
+                or ":" in maybe_title
+            )
+
+            if not looks_like_body and maybe_title:
+                title = maybe_title
+            else:
+                remainder_from_first = tail_raw
+
+        body_lines = []
+        if remainder_from_first:
+            body_lines.append(remainder_from_first)
+        body_lines.extend(lines[1:])
+        cleaned = "\n".join(body_lines).strip()
     else:
         title = f"第{chapter_num}章"
         cleaned = "\n".join(lines).strip()
+
+    # 去掉正文开头再次出现的“第X章 ...”行（避免正文重复标题）
+    heading_line = re.compile(r"^(?:#{1,6}\s*)?第\s*[一二三四五六七八九十0-9]+\s*章(?:\s*[：:].*)?$")
+    cleaned_split = cleaned.split("\n") if cleaned else []
+    while cleaned_split and heading_line.match(cleaned_split[0].strip()):
+        cleaned_split.pop(0)
+    cleaned = "\n".join(cleaned_split).strip()
 
     # 二次过滤仅移除“明确模板行”
     cleaned_lines = []
@@ -192,19 +227,33 @@ def _extract_title_and_clean_body(body: str, chapter_num: int) -> tuple[str, str
     cleaned = "\n".join(cleaned_lines).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
-    # 最终兜底：若仍为空，直接回退到原始正文（仅去掉首行章标题）
-    if not cleaned:
-        if m and len(original_lines) > 1:
-            cleaned = "\n".join(original_lines[1:]).strip()
-        else:
-            cleaned = text
-
     return title, cleaned
+
+
+def _sanitize_ui_text(text: str, single_line: bool = False) -> str:
+    """展示层兜底清洗：去掉 markdown 残留与异常标点。"""
+    if not text or not isinstance(text, str):
+        return ""
+    s = text.replace("\r\n", "\n").replace("\r", "\n")
+    s = re.sub(r"\*\*+", "", s)
+    s = re.sub(r"__+", "", s)
+    s = re.sub(r"`+", "", s)
+    s = re.sub(r"^\s*#{1,6}\s*", "", s, flags=re.MULTILINE)
+    s = re.sub(r"^\s*[-*•·]\s+", "", s, flags=re.MULTILINE)
+    s = re.sub(r"^[\s\-—_~•·*#`，,。；;：:、|]+", "", s)
+    s = re.sub(r"(?m)^\s*[\-—_~•·*#`，,。；;：:、|]+", "", s)
+    s = re.sub(r"([，。！？；：,.!?;:、])\1+", r"\1", s)
+    if single_line:
+        s = " ".join(seg.strip() for seg in s.split("\n") if seg.strip())
+    else:
+        s = re.sub(r"\n{3,}", "\n\n", s)
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
 
 
 def _chapter_display_illustration(ch: dict, filter_on: bool) -> str:
     default_empty = "（本章暂无插画描述）"
-    return ch.get("illustration", default_empty)
+    return _sanitize_ui_text(ch.get("illustration", default_empty), single_line=True)
 
 
 def render_chapter(chapter_data: dict, chapter_num: int, filter_display: bool = True):
@@ -568,7 +617,7 @@ def main_new_story():
             if choices and not st.session_state.story_complete:
                 st.markdown("**选择剧情走向：**")
                 for choice in choices:
-                    btn_label = (choice.get("text") or "").strip() or (
+                    btn_label = _sanitize_ui_text(choice.get("text") or "", single_line=True) or (
                         f"选项 {choice['id']}"
                     )
                     if st.button(
@@ -578,7 +627,7 @@ def main_new_story():
                         type="secondary",
                     ):
                         st.session_state.selected_branch = (
-                            f"【分支{choice['id']}】 {choice['text']}"
+                            f"【分支{choice['id']}】 {btn_label}"
                         )
                         st.session_state.branch_history.append(
                             {
