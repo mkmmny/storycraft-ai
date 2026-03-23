@@ -189,6 +189,36 @@ def _strip_prompt_leak_lines(text: str) -> str:
     return cleaned.strip()
 
 
+def _normalize_generated_text(text: str, keep_newlines: bool = True) -> str:
+    """统一清洗模型输出中的 Markdown 残留与不合时宜标点。"""
+    if not text or not isinstance(text, str):
+        return ""
+
+    s = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 去除常见 markdown 残留符号（加粗、标题、列表、代码标记等）
+    s = re.sub(r"\*\*+", "", s)
+    s = re.sub(r"__+", "", s)
+    s = re.sub(r"`+", "", s)
+    s = re.sub(r"^\s*#{1,6}\s*", "", s, flags=re.MULTILINE)
+    s = re.sub(r"^\s*[-*•·]\s+", "", s, flags=re.MULTILINE)
+
+    # 清理开头/行首异常标点
+    s = re.sub(r"^[\s\-—_~•·*#`，,。；;：:、|]+", "", s)
+    s = re.sub(r"(?m)^\s*[\-—_~•·*#`，,。；;：:、|]+", "", s)
+
+    # 标点规范化（合并重复标点）
+    s = re.sub(r"([，。！？；：,.!?;:、])\1+", r"\1", s)
+    s = re.sub(r"\s{2,}", " ", s)
+
+    if keep_newlines:
+        s = re.sub(r"\n{3,}", "\n\n", s)
+    else:
+        s = " ".join(seg.strip() for seg in s.split("\n") if seg.strip())
+
+    return s.strip()
+
+
 def sanitize_choice_text(text: str) -> str:
     """
     清洗单个分支选项：去掉「以下是第X章」等无关元信息，避免按钮显示错乱。
@@ -212,6 +242,7 @@ def sanitize_choice_text(text: str) -> str:
     s = re.sub(r"^[，,。；;：\s]+", "", s)
     s = re.sub(r"\s+[123]\.?\s*$", "", s)
     s = re.sub(r"[：:]\s*$", "", s).strip()
+    s = _normalize_generated_text(s, keep_newlines=False)
     return s
 
 
@@ -402,9 +433,9 @@ def _parse_chapter_response(raw_content: str) -> dict:
     illustration_raw = _strip_prompt_leak_lines(illustration) if illustration else None
     illustration_raw = _clean_illustration_text(illustration_raw or "")
 
-    content = filter_sensitive_content(content)
+    content = _normalize_generated_text(filter_sensitive_content(content), keep_newlines=True)
     illustration = (
-        filter_sensitive_content(illustration_raw)
+        _normalize_generated_text(filter_sensitive_content(illustration_raw), keep_newlines=False)
         if illustration_raw
         else "（本章暂无插画描述）"
     )
