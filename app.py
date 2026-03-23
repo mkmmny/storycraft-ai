@@ -5,6 +5,7 @@ AI 互动故事生成器 - 主程序
 """
 
 import re
+import time
 import streamlit as st
 from story_storage import (
     save_story,
@@ -694,18 +695,34 @@ def main_new_story():
                         st.rerun()
                 return
 
-            with st.spinner("AI 正在创作中，请稍候..."):
-                result = generate_chapter(
-                    theme=config["theme"],
-                    protagonist=config["protagonist"],
-                    style=config["style"],
-                    age_range=config["age_range"],
-                    values=config["values"],
-                    chapter_num=current_num,
-                    previous_chapters=chapters,
-                    chosen_branch=selected_branch if current_num > 1 else None,
-                    strict_generation=strict_gen,
-                )
+            st.info("✍️ AI 正在创作，本章正文将逐步显示…")
+            stream_box = st.empty()
+            last_preview = {"text": ""}
+            last_ts = {"v": 0.0}
+
+            def _on_stream_preview(preview_text: str):
+                now = time.time()
+                if preview_text == last_preview["text"]:
+                    return
+                # 轻微节流，避免频繁重绘卡顿
+                if now - last_ts["v"] < 0.03:
+                    return
+                last_preview["text"] = preview_text
+                last_ts["v"] = now
+                stream_box.markdown(preview_text)
+
+            result = generate_chapter(
+                theme=config["theme"],
+                protagonist=config["protagonist"],
+                style=config["style"],
+                age_range=config["age_range"],
+                values=config["values"],
+                chapter_num=current_num,
+                previous_chapters=chapters,
+                chosen_branch=selected_branch if current_num > 1 else None,
+                strict_generation=strict_gen,
+                stream_callback=_on_stream_preview,
+            )
 
             if result.get("error"):
                 st.error(result["content"])

@@ -546,6 +546,36 @@ def _clean_illustration_text(text: str) -> str:
     return result
 
 
+def _stream_preview_body(raw_partial: str, chapter_num: int) -> str:
+    """将流式增量文本清洗为“可展示的正文预览”（不含思考/提纲/分支/插画）。"""
+    text = _strip_think_blocks(raw_partial or "")
+    text = _strip_prompt_leak_lines(text)
+    text = _strip_reasoning_prefix_lines(text)
+
+    # 仅保留章节主体（去掉插画与分支区）
+    lines = text.split("\n")
+    body_lines = []
+    for ln in lines:
+        s = ln.strip()
+        if re.search(r"^\s*【插画】", s):
+            break
+        if re.search(r"^\s*【分支\s*[ABC]\s*】", s):
+            break
+        body_lines.append(ln)
+
+    body = "\n".join(body_lines).strip()
+    body = strip_embedded_branch_markers_from_body(body)
+    body = strip_leading_llm_preamble(body)
+
+    # 尝试剥离严格标题行，仅展示正文内容
+    _, strict_body, has_strict = _extract_strict_heading_and_body(body, chapter_num)
+    if has_strict:
+        body = strict_body
+
+    body = _normalize_generated_text(body, keep_newlines=True)
+    return body
+
+
 def _parse_chapter_response(raw_content: str, chapter_num: int) -> dict:
     """
     从模型原始输出解析章节结构
@@ -688,6 +718,7 @@ def generate_chapter(
     previous_chapters: list = None,
     chosen_branch: str = None,
     strict_generation: bool = True,
+    stream_callback=None,
 ) -> dict:
     """
     生成故事章节；若未通过安全审核则自动重试，最多 MAX_GENERATION_RETRIES 次。
@@ -725,20 +756,48 @@ def generate_chapter(
         )
 
         try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                temperature=0.65,
-                top_p=0.95,
-                max_tokens=1200,
-                extra_body={"thinking_budget": 512},
-            )
+            if stream_callback:
+                stream = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=0.65,
+                    top_p=0.95,
+                    max_tokens=1200,
+                    extra_body={"thinking_budget": 512},
+                    stream=True,
+                )
+                raw_content = ""
+                for chunk in stream:
+                    delta = ""
+                    try:
+                        delta = chunk.choices[0].delta.content or ""
+                    except Exception:
+                        delta = ""
+                    if not delta:
+                        continue
+                    raw_content += delta
+                    preview = _stream_preview_body(raw_content, chapter_num)
+                    if preview:
+                        stream_callback(preview)
+                raw_content = raw_content.strip()
+            else:
+                response = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=0.65,
+                    top_p=0.95,
+                    max_tokens=1200,
+                    extra_body={"thinking_budget": 512},
+                )
 
-            msg = response.choices[0].message
-            raw_content = (msg.content or "").strip()
+                msg = response.choices[0].message
+                raw_content = (msg.content or "").strip()
 
             if not _passes_safety(raw_content):
                 last_error = f"第 {attempt} 次生成未通过安全审核，正在重试…"
