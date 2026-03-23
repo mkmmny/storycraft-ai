@@ -61,7 +61,11 @@ def _build_system_prompt(theme: str, protagonist: str, style: str, age_range: st
    【分支B】xxx
    【分支C】xxx（可选）
 6. 每个【分支X】后面只写该选项的一句简短剧情描述（20-60字），同一行内写完；禁止在分支后写「以下是第X章」「第X章内容」等任何元说明或预告。
-7. **禁止**在正文最开头写「好的」「这是为」「根据」「为您创作」「下面是为X岁小朋友」等寒暄或元说明；正文必须直接以「第X章：」标题或故事正文第一句开始。
+7. **禁止**在正文最开头写「好的」「这是为」「根据」「为您创作」「下面是为X岁小朋友」等寒暄或元说明。
+8. 在思考完成后的正文起始位置，必须先输出单独一行标题，格式严格为：`第X章 标题`（中间仅一个空格）。
+9. 标题行中的“标题”部分必须少于10个字，且禁止出现任何标点符号（如 ，。！？：；,.!?;: 等）。
+10. 标题行之后必须换行写正文；不要把标题混入正文句子中，也不要在标题与正文之间插入提纲说明。
+11. 不得输出思考过程、推理草稿、模板提纲（如 <think>、大纲、开头/背景/事件/高潮/结尾 等）。
 """
 
 
@@ -79,8 +83,13 @@ def _build_user_message(
 要求：
 1. 开篇引人入胜，介绍主角和故事背景
 2. 章节约300-500字
-3. 章末提供2-3个【分支X】格式的剧情选择（分支后仅一句选项描述，勿写章节预告）
-4. 单独一行给出本章的"文字插画描述"（50-80字，描述本章关键场景的画面，供读者想象），格式为：【插画】描述内容"""
+3. 必须先输出单独一行标题，严格格式：第1章 标题
+   - “第1章”和标题之间只能有空格
+   - 不允许使用冒号、顿号、逗号、句号等任何标点连接
+   - 标题必须少于10个字，且不含标点
+4. 标题下一行开始写正文，不得插入提纲/说明/思考过程
+5. 章末提供2-3个【分支X】格式的剧情选择（分支后仅一句选项描述，勿写章节预告）
+6. 单独一行给出本章的"文字插画描述"（50-80字，描述本章关键场景的画面，供读者想象），格式为：【插画】描述内容"""
     else:
         history = "\n\n".join(
             f"第{i}章：\n{ch.get('content', '')}"
@@ -95,9 +104,14 @@ def _build_user_message(
 要求：
 1. 承接上文，自然过渡
 2. 章节约300-500字
-3. 第5章为结局章，不需要分支选择
-4. 非结局章末提供2-3个【分支X】格式的剧情选择（分支后仅一句选项描述，勿写章节预告）
-5. 单独一行给出本章的"文字插画描述"（50-80字），格式为：【插画】描述内容"""
+3. 必须先输出单独一行标题，严格格式：第{chapter_num}章 标题
+   - “第{chapter_num}章”和标题之间只能有空格
+   - 不允许使用冒号、顿号、逗号、句号等任何标点连接
+   - 标题必须少于10个字，且不含标点
+4. 标题下一行开始写正文，不得插入提纲/说明/思考过程
+5. 第5章为结局章，不需要分支选择
+6. 非结局章末提供2-3个【分支X】格式的剧情选择（分支后仅一句选项描述，勿写章节预告）
+7. 单独一行给出本章的"文字插画描述"（50-80字），格式为：【插画】描述内容"""
 
     if retry_suffix:
         base = base + "\n\n" + retry_suffix
@@ -109,6 +123,111 @@ RETRY_SUFFIX = (
     "严禁出现：暴力、血腥、色情、赌博、毒品、自残、虐待等描写；"
     "用词温和、适合儿童；保持剧情有趣且积极。"
 )
+
+_TITLE_PUNCT_RE = re.compile(r"[，。！？；：,.!?;:、（）()《》【】\[\]“”‘’\"'…—·]")
+
+
+def _cn_num_to_int(token: str) -> int | None:
+    """将常见中文/阿拉伯章序号转为整数（支持 1-99 的中文数字）。"""
+    if not token:
+        return None
+    token = token.strip()
+    if token.isdigit():
+        return int(token)
+
+    mapping = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if token == "十":
+        return 10
+    if "十" in token:
+        parts = token.split("十")
+        if len(parts) != 2:
+            return None
+        left = mapping.get(parts[0], 1 if parts[0] == "" else None)
+        right = mapping.get(parts[1], 0 if parts[1] == "" else None)
+        if left is None or right is None:
+            return None
+        return left * 10 + right
+
+    total = 0
+    for ch in token:
+        if ch not in mapping:
+            return None
+        total = total * 10 + mapping[ch]
+    return total if total > 0 else None
+
+
+def _parse_strict_title_line(line: str, chapter_num: int | None = None) -> tuple[str, str] | None:
+    """
+    识别严格标题行：第X章 标题
+    规则：
+    - 必须包含“第X章”
+    - 章后必须至少一个空格再接标题
+    - 标题不含标点
+    - 标题长度 < 10
+    - 若传入 chapter_num，则 X 必须与 chapter_num 一致
+    """
+    s = (line or "").strip()
+    m = re.match(r"^(?:#{1,6}\s*)?第\s*([一二三四五六七八九十两零百0-9]+)\s*章\s+(.+?)\s*$", s)
+    if not m:
+        return None
+
+    chapter_token = (m.group(1) or "").strip()
+    title = (m.group(2) or "").strip()
+    if not title:
+        return None
+    if _TITLE_PUNCT_RE.search(title):
+        return None
+    if len(title) >= 10:
+        return None
+
+    parsed_num = _cn_num_to_int(chapter_token)
+    if chapter_num is not None and parsed_num is not None and parsed_num != chapter_num:
+        return None
+
+    chapter_label = f"第{chapter_num}章" if chapter_num is not None else f"第{chapter_token}章"
+    return chapter_label, title
+
+
+def _extract_strict_heading_and_body(text: str, chapter_num: int) -> tuple[str, str, bool]:
+    """
+    从文本中提取严格标题与正文。
+    - 只要在开头若干行识别到严格标题，即视为标题；该行之后即正文
+    - 标题前内容视为污染提示并丢弃
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return f"第{chapter_num}章", "", False
+
+    lines = [ln.rstrip() for ln in raw.split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if not lines:
+        return f"第{chapter_num}章", "", False
+
+    heading_idx = -1
+    heading_title = ""
+    for idx, ln in enumerate(lines[:20]):
+        matched = _parse_strict_title_line(ln, chapter_num=chapter_num)
+        if matched:
+            heading_idx = idx
+            heading_title = matched[1]
+            break
+
+    if heading_idx < 0:
+        return f"第{chapter_num}章", raw, False
+
+    body_lines = lines[heading_idx + 1 :]
+    while body_lines and not body_lines[0].strip():
+        body_lines.pop(0)
+
+    # 防止正文开头再重复出现“第X章 ...”标题
+    while body_lines and _parse_strict_title_line(body_lines[0], chapter_num=chapter_num):
+        body_lines.pop(0)
+        while body_lines and not body_lines[0].strip():
+            body_lines.pop(0)
+
+    body = "\n".join(body_lines).strip()
+    return heading_title, body, True
 
 # 分支选项后常见的模型元信息（需从选项正文中剔除）
 _BRANCH_META_PATTERNS = [
@@ -153,15 +272,18 @@ def _strip_prompt_leak_lines(text: str) -> str:
         if in_outline:
             if re.match(r"^[•·\-*]\s+", line) or re.match(r"^\d+[\.|、]\s*", line):
                 continue
-            # 遇到正文标题/正文第一句时退出提纲模式
-            if re.match(rf"^(?:第\s*f=[一二三四五六七八九十0-9]+\s*章|{protagonist}|从前|一天|阳光|月光|\"|“)", line):
+            # 识别到严格标题行时立即退出提纲模式
+            if _parse_strict_title_line(line) is not None:
+                in_outline = False
+            # 兜底：遇到常见正文第一句也退出
+            elif re.match(r"^(?:从前|一天|阳光|月光|\"|“)", line):
                 in_outline = False
             else:
                 continue
 
         bad = [
             r"^字数\s*[:：]",
-            r"^字数控制\s*[:：]",
+            r"^字数控制\s*[:：]?",
             r"^分支选项\s*[:：]",
             r"^分支描述要简短\s*[:：]?",
             r"^确保每个选项",
@@ -177,6 +299,8 @@ def _strip_prompt_leak_lines(text: str) -> str:
             r"^以下是第\s*\d+\s*章",
             r"^第\s*\d+\s*章内容",
             r"^正文内容\s*[:：]",
+            r"^正文写作注意",
+            r"^插画描述\s*[（(]",
             r"^\s*</think>\s*$",
         ]
         if any(re.search(p, line, flags=re.IGNORECASE) for p in bad):
@@ -259,6 +383,41 @@ def _is_preamble_line(s: str) -> bool:
     if re.search(r"(为您|为您量身|为您创作|请看以下|下面(?:开始|是))", s):
         return True
     return False
+
+
+def _strip_reasoning_prefix_lines(text: str) -> str:
+    """去掉模型把“写作提示/思考过程”放在正文前的污染段。"""
+    if not text or not isinstance(text, str):
+        return text
+
+    lines = text.split("\n")
+    out = []
+    skipping = True
+
+    title_line = re.compile(r"^(?:#{1,6}\s*)?第\s*[一二三四五六七八九十0-9]+\s*章")
+    obvious_reasoning = re.compile(
+        r"^(上一个|因此|这样|只要|方式不同|都符合|正文写作注意|字数控制|插画描述\s*[（(]|我们选择|关键场景)",
+        flags=re.IGNORECASE,
+    )
+
+    for raw in lines:
+        s = raw.strip()
+        if skipping:
+            if not s:
+                continue
+            if title_line.search(s):
+                skipping = False
+                out.append(raw)
+                continue
+            if obvious_reasoning.search(s):
+                continue
+            # 若不是明显提示词，也先保留，避免误删正常正文
+            skipping = False
+            out.append(raw)
+        else:
+            out.append(raw)
+
+    return "\n".join(out).strip()
 
 
 def strip_leading_llm_preamble(text: str) -> str:
@@ -387,7 +546,7 @@ def _clean_illustration_text(text: str) -> str:
     return result
 
 
-def _parse_chapter_response(raw_content: str) -> dict:
+def _parse_chapter_response(raw_content: str, chapter_num: int) -> dict:
     """
     从模型原始输出解析章节结构
     """
@@ -427,7 +586,18 @@ def _parse_chapter_response(raw_content: str) -> dict:
     # 正文中不再保留【分支A/B/C】，避免与下方按钮重复
     content = strip_embedded_branch_markers_from_body(content)
     content = _strip_prompt_leak_lines(content)
+    content = _strip_reasoning_prefix_lines(content)
     content = strip_leading_llm_preamble(content)
+
+    # 强制解析“第X章 标题（<10字、无标点、章后空格） + 换行正文”
+    strict_title, strict_body, has_strict_heading = _extract_strict_heading_and_body(content, chapter_num)
+    if has_strict_heading:
+        content = strict_body
+    # 为展示层提供结构化标题，避免正文重复出现
+    chapter_heading = {
+        "chapter_label": f"第{chapter_num}章",
+        "title": strict_title if has_strict_heading else "",
+    }
 
     content_raw = content
     illustration_raw = _strip_prompt_leak_lines(illustration) if illustration else None
@@ -446,6 +616,7 @@ def _parse_chapter_response(raw_content: str) -> dict:
         "illustration": illustration,
         "illustration_raw": illustration_raw or "",
         "choices": choices,
+        "heading": chapter_heading,
         "error": False,
     }
 
@@ -474,11 +645,24 @@ def _contains_reasoning_leak(text: str) -> bool:
 
 
 def _parsed_chapter_is_valid(parsed: dict, chapter_num: int) -> bool:
-    """解析结果校验：正文必须可读，且不含思考/模板污染。"""
+    """解析结果校验：正文必须可读、无污染，且标题格式严格合规。"""
     content = (parsed.get("content_raw") or parsed.get("content") or "").strip()
     if not content:
         return False
     if _contains_reasoning_leak(content):
+        return False
+
+    heading = parsed.get("heading") or {}
+    title = (heading.get("title") or "").strip()
+    chapter_label = (heading.get("chapter_label") or f"第{chapter_num}章").strip()
+
+    # 强制要求：必须识别出严格标题
+    if not title:
+        return False
+    # 标题再次校验：<10字、无标点
+    if len(title) >= 10 or _TITLE_PUNCT_RE.search(title):
+        return False
+    if chapter_label != f"第{chapter_num}章":
         return False
 
     # 非极端短文本：避免被清洗后只剩一两句模板残片
@@ -560,7 +744,7 @@ def generate_chapter(
                 last_error = f"第 {attempt} 次生成未通过安全审核，正在重试…"
                 continue
 
-            parsed = _parse_chapter_response(raw_content)
+            parsed = _parse_chapter_response(raw_content, chapter_num)
             if not _parsed_chapter_is_valid(parsed, chapter_num):
                 last_error = f"第 {attempt} 次生成包含模板/思考过程污染，正在重试…"
                 continue

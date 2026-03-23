@@ -363,9 +363,17 @@ def _chapter_display_illustration(ch: dict, filter_on: bool) -> str:
 
 def render_chapter(chapter_data: dict, chapter_num: int, filter_display: bool = True):
     body = _chapter_display_body(chapter_data, filter_display)
-    title, cleaned_body = _extract_title_and_clean_body(body, chapter_num)
 
-    chapter_label = f"第{chapter_num}章"
+    heading = chapter_data.get("heading") or {}
+    chapter_label = (heading.get("chapter_label") or f"第{chapter_num}章").strip()
+    heading_title = (heading.get("title") or "").strip()
+
+    if heading_title:
+        title = heading_title
+        cleaned_body = _extract_title_and_clean_body(body, chapter_num)[1]
+    else:
+        title, cleaned_body = _extract_title_and_clean_body(body, chapter_num)
+
     box_title = chapter_label if title == chapter_label else f"{chapter_label} · {title}"
 
     st.markdown(
